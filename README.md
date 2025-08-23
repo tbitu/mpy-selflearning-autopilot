@@ -38,7 +38,7 @@ graph TD
     end
 
     subgraph High-Current Pump Circuit
-        C[Motor Driver (e.g., BTS7960 H-Bridge)]
+        C[Motor Driver e.g., BTS7960 H-Bridge]
         F[12V Hydraulic Pump Motor]
     end
 
@@ -61,7 +61,7 @@ graph TD
 
     %% Central Ground Bus
     subgraph Ground Connections
-        GND((GND BUS))
+        GND[GND BUS]
     end
     style GND fill:#333,stroke:#fff,stroke-width:2px,color:#fff
 
