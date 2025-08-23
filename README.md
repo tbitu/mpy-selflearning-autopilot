@@ -32,93 +32,79 @@ This diagram shows the complete wiring. The control electronics are powered by a
 ```mermaid
 graph TD
     %% Define Subgraphs for better organization
-    subgraph Power Sources
+    subgraph PowerSystem [Power System]
+        direction LR
         A[Boat's 12V Battery]
         B[Ignition Switched 12V]
+        H[12V to 5V Buck Converter]
     end
 
-    subgraph High-Current Pump Circuit
-        C[Motor Driver e.g., BTS7960 H-Bridge]
-        F[12V Hydraulic Pump Motor]
+    subgraph HighCurrentCircuit [High-Current Pump Circuit]
+        C[Motor Driver e.g., BTS7960]
+        F[12V Hydraulic Pump]
     end
 
-    subgraph Control Electronics
-        subgraph ESP32-DevKitC
+    subgraph ControlCircuit [Control Circuit]
+        subgraph ESP32 [ESP32 DevKitC]
             direction LR
             D_VIN[Vin]
             D_GND[GND]
             D_3V3[3.3V]
-            D_GPIO21[GPIO 21 / I2C SDA]
-            D_GPIO22[GPIO 22 / I2C SCL]
-            D_GPIO26[GPIO 26 / Pump DIR]
-            D_GPIO27[GPIO 27 / Pump PWM]
-            D_GPIO33[GPIO 33 / Button]
+            D_GPIO21[GPIO 21]
+            D_GPIO22[GPIO 22]
+            D_GPIO26[GPIO 26]
+            D_GPIO27[GPIO 27]
+            D_GPIO33[GPIO 33]
         end
         E[BNO055 Sensor]
-        H[12V to 5V DC-DC Buck Converter]
-        G[Push Button]
+        G[Navigate Button]
     end
 
-    %% Central Ground Bus
-    subgraph Ground Connections
-        GND[GND BUS]
+    %% Central Ground Bus - CRITICAL
+    subgraph GroundBus [Ground Bus - All Grounds Connect Here]
+        GND[COMMON GND]
     end
     style GND fill:#333,stroke:#fff,stroke-width:2px,color:#fff
 
-    %% --- Power Connections ---
-    A -- "Direct 12V+ (HEAVY GAUGE RED)" --> C[B+]
-    B -- "Switched 12V+ (RED)" --> H[Input +]
-    H -- "5V+ Output (ORANGE)" --> D_VIN
-    D_3V3 -- "3.3V+ (YELLOW)" --> E[Vin]
+    %% --- POWER WIRING ---
+    B -- "Switched 12V+" --> H[Input +]
+    H -- "5V+ Output" --> D_VIN[Vin]
+    D_3V3 -- "3.3V+" --> E[Vin]
+    A -- "Direct 12V+ (Heavy Gauge)" --> C[B+]
 
-    %% --- Ground Connections (All grounds connect to the central bus) ---
-    A -- "GND (HEAVY GAUGE BLACK)" --> GND
-    C[B-] -- "GND (BLACK)" --> GND
-    H[Input -] -- "GND (BLACK)" --> GND
-    H[Output -] -- "GND (BLACK)" --> GND
-    D_GND -- "GND (BLACK)" --> GND
-    E[GND] -- "GND (BLACK)" --> GND
-    G[Pin 2] -- "GND (BLACK)" --> GND
+    %% --- GROUND WIRING ---
+    A -- "GND (Heavy Gauge)" --> GND
+    H[Input -] -- "GND" --> GND
+    H[Output -] -- "GND" --> GND
+    D_GND -- "GND" --> GND
+    E[GND] -- "GND" --> GND
+    G[Pin 2] -- "GND" --> GND
+    C[B-] -- "GND" --> GND
 
-    %% --- Control Signal Connections ---
-    D_GPIO26 -- "Direction Signal (BLUE)" --> C[RPWM/DIR]
-    D_GPIO27 -- "PWM Signal (BLUE)" --> C[LPWM/PWM]
-    D_GPIO33 -- "Button Signal (GREEN)" --> G[Pin 1]
+    %% --- PUMP CONTROL SIGNALS (from main.py) ---
+    D_GPIO26 -- "PUMP_DIR_PIN" --> C[RPWM/DIR]
+    D_GPIO27 -- "PUMP_PWM_PIN" --> C[LPWM/PWM]
 
-    %% --- I2C Sensor Connections ---
-    D_GPIO22 -- "SCL (PURPLE)" --> E[SCL]
-    D_GPIO21 -- "SDA (PURPLE)" --> E[SDA]
+    %% --- BUTTON WIRING (from main.py) ---
+    D_GPIO33 -- "NAVIGATE_BUTTON_PIN" --> G[Pin 1]
 
-    %% --- Motor Output Connections ---
-    C[M+] -- "Motor Wire (HEAVY GAUGE BLUE)" --> F[+]
-    C[M-] -- "Motor Wire (HEAVY GAUGE BLUE)" --> F[-]
+    %% --- I2C SENSOR WIRING (from main.py) ---
+    D_GPIO22 -- "SCL_PIN" --> E[SCL]
+    D_GPIO21 -- "SDA_PIN" --> E[SDA]
 
-    %% --- Styling and Comments ---
-    classDef esp32 fill:#00979D,stroke:#333,stroke-width:2px,color:white;
-    class D_VIN,D_GND,D_3V3,D_GPIO21,D_GPIO22,D_GPIO26,D_GPIO27,D_GPIO33 esp32;
+    %% --- MOTOR OUTPUT WIRING ---
+    C[M+] -- "Motor Wire (Heavy Gauge)" --> F[+]
+    C[M-] -- "Motor Wire (Heavy Gauge)" --> F[-]
 
-    classDef sensor fill:#7952B3,stroke:#333,stroke-width:2px,color:white;
-    class E sensor;
+    %% --- Styling ---
+    linkStyle 3 stroke:red,stroke-width:4px
+    linkStyle 0,1,2 stroke:orange,stroke-width:2px
 
-    classDef motorDriver fill:#DC3545,stroke:#333,stroke-width:2px,color:white;
-    class C motorDriver;
+    linkStyle 4,5,6,7,8,9,10 stroke:black,stroke-width:2px
 
-    linkStyle 0 stroke:red,stroke-width:4px
-    linkStyle 1 stroke:red,stroke-width:2px
-    linkStyle 2 stroke:orange,stroke-width:2px
-    linkStyle 3 stroke:yellow,stroke-width:2px
-    linkStyle 4 stroke:black,stroke-width:4px
-    linkStyle 5 stroke:black,stroke-width:2px
-    linkStyle 6 stroke:black,stroke-width:2px
-    linkStyle 7 stroke:black,stroke-width:2px
-    linkStyle 8 stroke:black,stroke-width:2px
-    linkStyle 9 stroke:black,stroke-width:2px
-    linkStyle 10 stroke:black,stroke-width:2px
-    linkStyle 11 stroke:blue,stroke-width:2px
-    linkStyle 12 stroke:blue,stroke-width:2px
+    linkStyle 11,12 stroke:blue,stroke-width:2px
     linkStyle 13 stroke:green,stroke-width:2px
-    linkStyle 14 stroke:purple,stroke-width:2px
-    linkStyle 15 stroke:purple,stroke-width:2px
-    linkStyle 16 stroke:#0077be,stroke-width:4px
-    linkStyle 17 stroke:#0077be,stroke-width:4px
+    linkStyle 14,15 stroke:purple,stroke-width:2px
+
+    linkStyle 16,17 stroke:#0077be,stroke-width:4px
 ```
