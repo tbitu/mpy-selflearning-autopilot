@@ -31,67 +31,78 @@ This diagram shows the complete wiring. The control electronics are powered by a
 
 ```mermaid
 graph TD
+    %% Define Subgraphs for better organization
     subgraph Power Sources
         A[Boat's 12V Battery]
         B[Ignition Switched 12V]
     end
 
-    subgraph High-Current Circuit
-        C[BTS7960 H-Bridge Driver]
-        F[Hydraulic Pump Motor]
+    subgraph High-Current Pump Circuit
+        C[Motor Driver (e.g., BTS7960 H-Bridge)]
+        F[12V Hydraulic Pump Motor]
     end
 
-    subgraph Control Circuit
+    subgraph Control Electronics
         subgraph ESP32-DevKitC
+            direction LR
             D_VIN[Vin]
             D_GND[GND]
             D_3V3[3.3V]
-            D_GPIO21[GPIO 21 / SDA]
-            D_GPIO22[GPIO 22 / SCL]
-            D_GPIO26[GPIO 26 / DIR]
-            D_GPIO27[GPIO 27 / PWM]
-            D_GPIO33[GPIO 33 / BTN]
+            D_GPIO21[GPIO 21 / I2C SDA]
+            D_GPIO22[GPIO 22 / I2C SCL]
+            D_GPIO26[GPIO 26 / Pump DIR]
+            D_GPIO27[GPIO 27 / Pump PWM]
+            D_GPIO33[GPIO 33 / Button]
         end
         E[BNO055 Sensor]
-        H[12V to 5V Buck Converter]
+        H[12V to 5V DC-DC Buck Converter]
         G[Push Button]
     end
 
-    %% Ground Bus (All grounds connect here)
-    subgraph GND Bus
-        GND((GND))
+    %% Central Ground Bus
+    subgraph Ground Connections
+        GND((GND BUS))
     end
-    style GND fill:#333,stroke:#fff
+    style GND fill:#333,stroke:#fff,stroke-width:2px,color:#fff
 
-    %% Power Connections
-    A -- Direct 12V+ (HEAVY RED) --> C[B+]
-    B -- Switched 12V+ (RED) --> H[Vin+]
-    H -- 5V+ (ORANGE) --> D_VIN
-    D_3V3 -- 3.3V+ (YELLOW) --> E[Vin]
+    %% --- Power Connections ---
+    A -- "Direct 12V+ (HEAVY GAUGE RED)" --> C[B+]
+    B -- "Switched 12V+ (RED)" --> H[Input +]
+    H -- "5V+ Output (ORANGE)" --> D_VIN
+    D_3V3 -- "3.3V+ (YELLOW)" --> E[Vin]
 
-    %% Ground Connections
-    A -- GND (HEAVY BLACK) --> GND
-    C[B-] -- GND (BLACK) --> GND
-    H[Vin-] -- GND (BLACK) --> GND
-    H[Vout-] -- GND (BLACK) --> GND
-    D_GND -- GND (BLACK) --> GND
-    E[GND] -- GND (BLACK) --> GND
-    G[Pin 2] -- GND (BLACK) --> GND
+    %% --- Ground Connections (All grounds connect to the central bus) ---
+    A -- "GND (HEAVY GAUGE BLACK)" --> GND
+    C[B-] -- "GND (BLACK)" --> GND
+    H[Input -] -- "GND (BLACK)" --> GND
+    H[Output -] -- "GND (BLACK)" --> GND
+    D_GND -- "GND (BLACK)" --> GND
+    E[GND] -- "GND (BLACK)" --> GND
+    G[Pin 2] -- "GND (BLACK)" --> GND
 
-    %% Control Signals
-    D_GPIO26 -- DIR (BLUE) --> C[RPWM]
-    D_GPIO27 -- PWM (BLUE) --> C[LPWM]
-    D_GPIO33 -- BTN (GREEN) --> G[Pin 1]
+    %% --- Control Signal Connections ---
+    D_GPIO26 -- "Direction Signal (BLUE)" --> C[RPWM/DIR]
+    D_GPIO27 -- "PWM Signal (BLUE)" --> C[LPWM/PWM]
+    D_GPIO33 -- "Button Signal (GREEN)" --> G[Pin 1]
 
-    %% I2C Sensor Signals
-    D_GPIO22 -- SCL (PURPLE) --> E[SCL]
-    D_GPIO21 -- SDA (PURPLE) --> E[SDA]
+    %% --- I2C Sensor Connections ---
+    D_GPIO22 -- "SCL (PURPLE)" --> E[SCL]
+    D_GPIO21 -- "SDA (PURPLE)" --> E[SDA]
 
-    %% Motor Output
-    C[M+] -- Motor Wire (HEAVY BLUE) --> F[+]
-    C[M-] -- Motor Wire (HEAVY BLUE) --> F[-]
+    %% --- Motor Output Connections ---
+    C[M+] -- "Motor Wire (HEAVY GAUGE BLUE)" --> F[+]
+    C[M-] -- "Motor Wire (HEAVY GAUGE BLUE)" --> F[-]
 
-    %% Styling
+    %% --- Styling and Comments ---
+    classDef esp32 fill:#00979D,stroke:#333,stroke-width:2px,color:white;
+    class D_VIN,D_GND,D_3V3,D_GPIO21,D_GPIO22,D_GPIO26,D_GPIO27,D_GPIO33 esp32;
+
+    classDef sensor fill:#7952B3,stroke:#333,stroke-width:2px,color:white;
+    class E sensor;
+
+    classDef motorDriver fill:#DC3545,stroke:#333,stroke-width:2px,color:white;
+    class C motorDriver;
+
     linkStyle 0 stroke:red,stroke-width:4px
     linkStyle 1 stroke:red,stroke-width:2px
     linkStyle 2 stroke:orange,stroke-width:2px
