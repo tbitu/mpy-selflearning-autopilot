@@ -1,0 +1,13 @@
+# .gitignore
+
+# MicroPython specific files
+*.pyc
+*~
+__pycache__/
+.pybuild/
+build/
+dist/
+sdist/
+*.egg-info/
+.ipynb_checkpoints/
+.micropython/
