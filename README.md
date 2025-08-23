@@ -32,65 +32,82 @@ This diagram shows the complete wiring. The control electronics are powered by a
 ```mermaid
 graph TD
     subgraph Power Sources
-        A[Main Battery 12V]
+        A[Boat's 12V Battery]
         B[Ignition Switched 12V]
     end
 
-    subgraph Power Electronics
+    subgraph High-Current Circuit
         C[BTS7960 H-Bridge Driver]
         F[Hydraulic Pump Motor]
     end
 
-    subgraph Control Electronics
-        D[ESP32-DevKitC]
+    subgraph Control Circuit
+        subgraph ESP32-DevKitC
+            D_VIN[Vin]
+            D_GND[GND]
+            D_3V3[3.3V]
+            D_GPIO21[GPIO 21 / SDA]
+            D_GPIO22[GPIO 22 / SCL]
+            D_GPIO26[GPIO 26 / DIR]
+            D_GPIO27[GPIO 27 / PWM]
+            D_GPIO33[GPIO 33 / BTN]
+        end
         E[BNO055 Sensor]
         H[12V to 5V Buck Converter]
         G[Push Button]
     end
 
-    %% High-Current Power Circuit
+    %% Ground Bus (All grounds connect here)
+    subgraph GND Bus
+        GND((GND))
+    end
+    style GND fill:#333,stroke:#fff
+
+    %% Power Connections
     A -- Direct 12V+ (HEAVY RED) --> C[B+]
-    C[M+] -- Motor Wire (HEAVY BLUE) --> F[Terminal 1]
-    C[M-] -- Motor Wire (HEAVY BLUE) --> F[Terminal 2]
-
-    %% Switched Control Power Circuit
     B -- Switched 12V+ (RED) --> H[Vin+]
-    H[Vout+] -- 5V+ (ORANGE) --> D[Vin]
-    D[3.3V] -- 3.3V+ (YELLOW) --> E[Vin]
+    H -- 5V+ (ORANGE) --> D_VIN
+    D_3V3 -- 3.3V+ (YELLOW) --> E[Vin]
 
-    %% Ground Connections (CRITICAL - ALL MUST CONNECT)
-    A -- Main GND (HEAVY BLACK) --> C[B-]
-    A -- Main GND (HEAVY BLACK) --> H[Vin-]
-    H[Vout-] -- GND (BLACK) --> D[GND]
-    D[GND] -- GND (BLACK) --> E[GND]
-    D[GND] -- GND (BLACK) --> G[Pin 2]
-    D[GND] -- GND (BLACK) --> C[GND]
+    %% Ground Connections
+    A -- GND (HEAVY BLACK) --> GND
+    C[B-] -- GND (BLACK) --> GND
+    H[Vin-] -- GND (BLACK) --> GND
+    H[Vout-] -- GND (BLACK) --> GND
+    D_GND -- GND (BLACK) --> GND
+    E[GND] -- GND (BLACK) --> GND
+    G[Pin 2] -- GND (BLACK) --> GND
 
-    %% Control Signal Connections
-    D[GPIO 26] -- DIR (BLUE) --> C[RPWM]
-    D[GPIO 27] -- PWM (BLUE) --> C[LPWM]
-    D[GPIO 33] -- BUTTON (GREEN) --> G[Pin 1]
+    %% Control Signals
+    D_GPIO26 -- DIR (BLUE) --> C[RPWM]
+    D_GPIO27 -- PWM (BLUE) --> C[LPWM]
+    D_GPIO33 -- BTN (GREEN) --> G[Pin 1]
 
-    %% I2C Sensor Connections
-    D[GPIO 22] -- SCL (PURPLE) --> E[SCL]
-    D[GPIO 21] -- SDA (PURPLE) --> E[SDA]
+    %% I2C Sensor Signals
+    D_GPIO22 -- SCL (PURPLE) --> E[SCL]
+    D_GPIO21 -- SDA (PURPLE) --> E[SDA]
+
+    %% Motor Output
+    C[M+] -- Motor Wire (HEAVY BLUE) --> F[+]
+    C[M-] -- Motor Wire (HEAVY BLUE) --> F[-]
 
     %% Styling
     linkStyle 0 stroke:red,stroke-width:4px
-    linkStyle 1 stroke:#0077be,stroke-width:4px
-    linkStyle 2 stroke:#0077be,stroke-width:4px
-    linkStyle 3 stroke:red,stroke-width:2px
-    linkStyle 4 stroke:orange,stroke-width:2px
-    linkStyle 5 stroke:yellow,stroke-width:2px
-    linkStyle 6 stroke:black,stroke-width:4px
-    linkStyle 7 stroke:black,stroke-width:4px
+    linkStyle 1 stroke:red,stroke-width:2px
+    linkStyle 2 stroke:orange,stroke-width:2px
+    linkStyle 3 stroke:yellow,stroke-width:2px
+    linkStyle 4 stroke:black,stroke-width:4px
+    linkStyle 5 stroke:black,stroke-width:2px
+    linkStyle 6 stroke:black,stroke-width:2px
+    linkStyle 7 stroke:black,stroke-width:2px
     linkStyle 8 stroke:black,stroke-width:2px
     linkStyle 9 stroke:black,stroke-width:2px
     linkStyle 10 stroke:black,stroke-width:2px
-    linkStyle 11 stroke:black,stroke-width:2px
+    linkStyle 11 stroke:blue,stroke-width:2px
     linkStyle 12 stroke:blue,stroke-width:2px
-    linkStyle 13 stroke:blue,stroke-width:2px
-    linkStyle 14 stroke:green,stroke-width:2px
+    linkStyle 13 stroke:green,stroke-width:2px
+    linkStyle 14 stroke:purple,stroke-width:2px
     linkStyle 15 stroke:purple,stroke-width:2px
-    linkStyle 16 stroke:purple,stroke-width:2px
+    linkStyle 16 stroke:#0077be,stroke-width:4px
+    linkStyle 17 stroke:#0077be,stroke-width:4px
 ```
