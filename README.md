@@ -34,9 +34,7 @@ This is a MicroPython project for a self-learning, adaptive autopilot for small 
 
 2.  **Flash MicroPython to the ESP32:** Follow the official instructions at [micropython.org](https://micropython.org/download/esp32/).
 
-3.  **Download the BNO055 library:** Download the `bno055.py` file from the link above and place it in the `lib/` directory of the project.
-
-4.  **Upload files to the ESP32:** Use a tool like `mpremote` to upload `main.py` and the entire `lib` folder to the ESP32 board.
+3.  **Upload files to the ESP32:** Use a tool like `mpremote` to upload `main.py` and the entire `lib` folder to the ESP32 board.
     ```bash
     # Copy the library folder
     mpremote cp -r lib/ :
@@ -45,6 +43,6 @@ This is a MicroPython project for a self-learning, adaptive autopilot for small 
     mpremote cp main.py :
     ```
 
-5.  **Connect the hardware:** Wire the components according to a suitable circuit diagram. Ensure all components share a common ground.
+4.  **Connect the hardware:** Wire the components according to a suitable circuit diagram. Ensure all components share a common ground.
 
-6.  **Start the autopilot:** Reboot the ESP32 board. The system will load the default calibration and is ready to use. Press the navigation button to engage the autopilot and hold the current course.
+5.  **Start the autopilot:** Reboot the ESP32 board. The system will load the default calibration and is ready to use. Press the navigation button to engage the autopilot and hold the current course.
