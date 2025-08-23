@@ -37,7 +37,7 @@ graph TD
 
     subgraph Power Distribution
         B[12V to 5V Buck Converter]
-        C[H-Bridge Motor Driver (e.g., BTS7960)]
+        C[H-Bridge Motor Driver e.g. BTS7960]
     end
 
     subgraph Control Unit
