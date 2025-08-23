@@ -15,6 +15,7 @@ PUMP_PWM_PIN = 27
 NAVIGATE_BUTTON_PIN = 33
 SDA_PIN = 21
 SCL_PIN = 22
+LED_PIN = 19 # Pin for the status LED
 
 # LEARNING PARAMETERS
 LEARNING_WAIT_SEC = 2      # Time in seconds to wait after a pulse before measuring
@@ -49,6 +50,8 @@ integral_error = 0.0 # The "memory" for the PI controller
 pump_dir = Pin(PUMP_DIR_PIN, Pin.OUT)
 pump_pwm = machine.PWM(Pin(PUMP_PWM_PIN), freq=1000, duty=0)
 navigate_button = Pin(NAVIGATE_BUTTON_PIN, Pin.IN, Pin.PULL_UP)
+led_pin = Pin(LED_PIN, Pin.OUT) # Initialize LED pin
+led_pin.value(0) # Ensure LED is off at startup
 nvs = NVS("autopilot")
 
 # --- Core 0: Sensor Thread ---
@@ -188,11 +191,13 @@ while True:
     if not navigate_button.value():
         if state == "NAVIGATING":
             state = "IDLE"
+            led_pin.value(0) # Turn LED OFF
             print("Navigation stopped.")
         elif state == "IDLE":
             TARGET_HEADING = current_heading # Grab the current heading
             integral_error = 0.0 # Reset memory when setting a new course
             state = "NAVIGATING"
+            led_pin.value(1) # Turn LED ON
             print(f"Navigation started. Holding new course: {TARGET_HEADING:.1f}")
         time.sleep_ms(500)
 
