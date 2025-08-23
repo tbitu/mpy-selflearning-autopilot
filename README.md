@@ -29,7 +29,7 @@ This is a MicroPython project for a self-learning, adaptive autopilot for small 
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/tbitu/mpy-selflearning-autopilot.git](https://github.com/tbitu/mpy-selflearning-autopilot.git)
+    git clone https://github.com/tbitu/mpy-selflearning-autopilot.git
     ```
 
 2.  **Flash MicroPython to the ESP32:** Follow the official instructions at [micropython.org](https://micropython.org/download/esp32/).
