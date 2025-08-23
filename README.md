@@ -31,12 +31,11 @@ This diagram shows the complete wiring. The control electronics are powered by a
 
 ```mermaid
 graph TD
-    %% Define Subgraphs for better organization
+    %% Define Subgraphs for clear organization
     subgraph PowerSystem [Power System]
-        direction LR
         A[Boat's 12V Battery]
         B[Ignition Switched 12V]
-        H[12V to 5V Buck Converter]
+        H[12V to 5V DC-DC Buck Converter]
     end
 
     subgraph HighCurrentCircuit [High-Current Pump Circuit]
@@ -46,12 +45,11 @@ graph TD
 
     subgraph ControlCircuit [Control Circuit]
         subgraph ESP32 [ESP32 DevKitC]
-            direction LR
             D_VIN[Vin]
             D_GND[GND]
             D_3V3[3.3V]
-            D_GPIO21[GPIO 21]
-            D_GPIO22[GPIO 22]
+            D_GPIO21[GPIO 21 / SDA]
+            D_GPIO22[GPIO 22 / SCL]
             D_GPIO26[GPIO 26]
             D_GPIO27[GPIO 27]
             D_GPIO33[GPIO 33]
@@ -60,19 +58,19 @@ graph TD
         G[Navigate Button]
     end
 
-    %% Central Ground Bus - CRITICAL
-    subgraph GroundBus [Ground Bus - All Grounds Connect Here]
-        GND[COMMON GND]
+    %% The single, critical ground point for the entire system
+    subgraph GroundBus [COMMON GROUND]
+        GND[GND BUS]
     end
     style GND fill:#333,stroke:#fff,stroke-width:2px,color:#fff
 
-    %% --- POWER WIRING ---
+    %% --- POWER WIRING (Corrected) ---
     B -- "Switched 12V+" --> H[Input +]
-    H -- "5V+ Output" --> D_VIN[Vin]
+    H[Output +] -- "5V+ Source" --> D_VIN[Vin]
     D_3V3 -- "3.3V+" --> E[Vin]
     A -- "Direct 12V+ (Heavy Gauge)" --> C[B+]
 
-    %% --- GROUND WIRING ---
+    %% --- GROUND WIRING (Corrected & Simplified) ---
     A -- "GND (Heavy Gauge)" --> GND
     H[Input -] -- "GND" --> GND
     H[Output -] -- "GND" --> GND
@@ -89,22 +87,10 @@ graph TD
     D_GPIO33 -- "NAVIGATE_BUTTON_PIN" --> G[Pin 1]
 
     %% --- I2C SENSOR WIRING (from main.py) ---
-    D_GPIO22 -- "SCL_PIN" --> E[SCL]
-    D_GPIO21 -- "SDA_PIN" --> E[SDA]
+    D_GPIO22 -- "SCL (Clock)" --> E[SCL]
+    D_GPIO21 -- "SDA (Data)" --> E[SDA]
 
     %% --- MOTOR OUTPUT WIRING ---
     C[M+] -- "Motor Wire (Heavy Gauge)" --> F[+]
     C[M-] -- "Motor Wire (Heavy Gauge)" --> F[-]
-
-    %% --- Styling ---
-    linkStyle 3 stroke:red,stroke-width:4px
-    linkStyle 0,1,2 stroke:orange,stroke-width:2px
-
-    linkStyle 4,5,6,7,8,9,10 stroke:black,stroke-width:2px
-
-    linkStyle 11,12 stroke:blue,stroke-width:2px
-    linkStyle 13 stroke:green,stroke-width:2px
-    linkStyle 14,15 stroke:purple,stroke-width:2px
-
-    linkStyle 16,17 stroke:#0077be,stroke-width:4px
 ```
