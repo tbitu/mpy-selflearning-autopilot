@@ -8,6 +8,39 @@ import _thread
 from machine import Pin, I2C, NVS
 from lib.bno055 import BNO055
 
+# --- Classes for State Management ---
+class State:
+    IDLE = "IDLE"
+    NAVIGATING = "NAVIGATING"
+
+class LearningState:
+    IDLE = "IDLE"
+    WAITING = "WAITING"
+    MEASURING = "MEASURING"
+
+class LearningContext:
+    def __init__(self):
+        self.pulse_direction = ""
+        self.pulse_ms = 0
+        self.heading_before_measure = 0.0
+        self.state = LearningState.IDLE
+        self.last_action_time = 0
+
+class Pins:
+    PUMP_DIR = 26
+    PUMP_PWM = 27
+    NAVIGATE_BUTTON = 33
+    SDA = 21
+    SCL = 22
+    LED = 19
+
+class Navigation:
+    CONTROL_LOOP_DELAY_MS = 1000
+    SAVE_INTERVAL = 20
+    PROPORTIONAL_GAIN = 0.6
+    INTEGRAL_GAIN = 0.1
+    INTEGRAL_MAX = 5.0
+
 # --- Configuration ---
 
 # PINS
@@ -19,13 +52,19 @@ SCL_PIN = 22
 LED_PIN = 19 # Pin for the status LED
 
 # LEARNING PARAMETERS
-LEARNING_WAIT_SEC = 2      # Time in seconds to wait after a pulse before measuring
-LEARNING_MEASURE_SEC = 3   # Time in seconds to measure the heading change
-LEARNING_RATE = 0.2        # How much a new measurement affects the old one (0.1 = 10% new, 90% old)
+LEARNING_WAIT_SEC = 5      # Initial time to wait after a pulse before measuring
+LEARNING_MEASURE_SEC = 8   # Initial time to measure the heading change
+LEARNING_RATE = 0.2        # How much a new measurement affects the old one
+MIN_HEADING_CHANGE = 0.5   # Minimum heading change to register as movement
+MAX_WAIT_SEC = 10.0       # Maximum allowed wait time
+MIN_WAIT_SEC = 2.0        # Minimum allowed wait time
+MAX_MEASURE_SEC = 15.0    # Maximum allowed measure time
+MIN_MEASURE_SEC = 3.0     # Minimum allowed measure time
+TIMING_ADAPT_RATE = 0.3   # How quickly timing parameters adapt (0.3 = 30% new, 70% old)
 
 # NAVIGATION PARAMETERS
 TARGET_HEADING = 180.0
-CONTROL_LOOP_DELAY_MS = 1000
+CONTROL_LOOP_DELAY_MS = 2000
 SAVE_INTERVAL = 20         # Save calibration to memory after every 20 adjustments
 
 # --- PI-CONTROL PARAMETERS ---
@@ -41,16 +80,24 @@ DEFAULT_CALIBRATION_DATA = {
 }
 
 # --- Global Variables ---
-state = "IDLE"
+state = State.IDLE
 calibration_data = {}
 current_heading = 0.0
 save_counter = 0
 integral_error = 0.0 # The "memory" for the PI controller
 
-# Non-blocking state variables
-learning_state = "IDLE" # "IDLE", "WAITING", "MEASURING"
+# Create learning context
+learning_context = LearningContext()
+learning_state = LearningState.IDLE  # For backward compatibility during refactoring
 last_action_time = 0
 heading_before_measure = 0.0
+turn_start_time = 0  # For measuring response characteristics
+
+# Turn rate tracking
+heading_history = []
+MAX_HISTORY = 10  # Store last 10 headings for turn rate calculation
+last_turn_direction = ""   # Track last turning direction
+turn_rate_threshold = 0.2  # degrees per second
 
 # --- Hardware Initialization ---
 pump_dir = Pin(PUMP_DIR_PIN, Pin.OUT)
@@ -96,6 +143,10 @@ def run_pump(direction, duration_ms):
         direction (str): Either 'port' or 'starboard'
         duration_ms (int): Duration in milliseconds
     """
+    if not safety_check():
+        print("Safety check failed, not running pump")
+        return
+        
     if direction not in ['port', 'starboard']:
         print(f"Invalid pump direction: {direction}")
         return
@@ -153,7 +204,7 @@ def run_navigation_cycle():
     It's called only when the state is "NAVIGATING" and we are not in a learning delay.
     """
     global save_counter, integral_error, learning_state, last_action_time, \
-           last_pulse_direction, last_pulse_ms
+           last_pulse_direction, last_pulse_ms, last_turn_direction
     
     now = time.ticks_ms()
 
@@ -164,6 +215,17 @@ def run_navigation_cycle():
     # Check if it's time for the next control loop iteration
     if time.ticks_diff(now, last_action_time) < CONTROL_LOOP_DELAY_MS:
         return
+    
+    # Calculate current turn rate
+    current_turn_rate = calculate_turn_rate()
+    
+    # If we're already turning in the desired direction, wait
+    if abs(current_turn_rate) > turn_rate_threshold:
+        heading_error = get_heading_difference(current_heading, TARGET_HEADING)
+        if ((current_turn_rate > 0 and heading_error > 0) or 
+            (current_turn_rate < 0 and heading_error < 0)):
+            return  # Already turning in the right direction
+            
     last_action_time = now
 
     # 1. FIND HEADING ERROR
@@ -184,25 +246,20 @@ def run_navigation_cycle():
         return
 
     # 3. CALCULATE REQUIRED TURN RATE (P + I)
-    p_term = abs(heading_error) * PROPORTIONAL_GAIN
-    i_term = abs(integral_error) * INTEGRAL_GAIN
-    required_turn_rate = p_term + i_term
+    required_turn_rate = calculate_required_turn(heading_error, integral_error)
     
-    direction = "starboard" if (heading_error * PROPORTIONAL_GAIN + integral_error * INTEGRAL_GAIN) > 0 else "port"
+    # Determine direction based on current turn rate and heading error
+    if abs(current_turn_rate) > turn_rate_threshold:
+        # If turning too fast, apply counter-rudder
+        direction = "port" if current_turn_rate > 0 else "starboard"
+        required_turn_rate = abs(current_turn_rate) * 0.5  # 50% counter-rudder
+    else:
+        direction = "starboard" if (heading_error * PROPORTIONAL_GAIN + integral_error * INTEGRAL_GAIN) > 0 else "port"
     
-    # The rest of the logic to find and run the pump is the same
-    pulses = calibration_data[direction]
-    sorted_pulses = sorted([int(p) for p in pulses.keys()])
-    best_pulse = 0
-    for pulse_ms in sorted_pulses:
-        if pulses[str(pulse_ms)] >= required_turn_rate:
-            best_pulse = pulse_ms
-            break
-    if best_pulse == 0 and required_turn_rate > 0:
-        best_pulse = sorted_pulses[-1]
+    best_pulse = find_best_pulse(direction, required_turn_rate)
 
     if best_pulse > 0:
-        overshoot_factor = required_turn_rate / pulses[str(best_pulse)]
+        overshoot_factor = required_turn_rate / calibration_data[direction][str(best_pulse)]
         pulse_to_run = int(best_pulse * overshoot_factor)
         
         # Store context for the learning part
@@ -234,6 +291,85 @@ def update_after_learning(direction, pulse_ms):
     actual_turn_rate = total_turn / LEARNING_MEASURE_SEC
     update_calibration_entry(direction, pulse_ms, actual_turn_rate)
 
+def safe_sensor_read():
+    """Wrapper for sensor reading with error handling"""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            heading, roll, pitch = bno.euler()
+            return heading
+        except Exception as e:
+            print(f"Sensor read attempt {attempt + 1} failed: {e}")
+            time.sleep(0.1)
+    return None
+
+def safety_check():
+    """Perform safety checks before running the pump"""
+    if not bno.calibrated():
+        print("Warning: Sensor not calibrated")
+        return False
+    if abs(integral_error) >= INTEGRAL_MAX * 0.9:
+        print("Warning: Large integral error")
+        return False
+    return True
+
+def calculate_required_turn(heading_error, integral_error):
+    """Calculate the required turn rate based on PI control"""
+    p_term = abs(heading_error) * Navigation.PROPORTIONAL_GAIN
+    i_term = abs(integral_error) * Navigation.INTEGRAL_GAIN
+    return p_term + i_term
+
+def find_best_pulse(direction, required_turn_rate):
+    """Find the best pulse duration for the required turn rate"""
+    pulses = calibration_data[direction]
+    sorted_pulses = sorted([int(p) for p in pulses.keys()])
+    for pulse_ms in sorted_pulses:
+        if pulses[str(pulse_ms)] >= required_turn_rate:
+            return pulse_ms
+    return sorted_pulses[-1] if sorted_pulses and required_turn_rate > 0 else 0
+
+def update_timing_parameters(response_time, settling_time):
+    """Update timing parameters based on observed boat behavior"""
+    global LEARNING_WAIT_SEC, LEARNING_MEASURE_SEC, PROPORTIONAL_GAIN, INTEGRAL_GAIN
+    
+    # Bound check response time
+    response_time = max(MIN_WAIT_SEC, min(MAX_WAIT_SEC, response_time))
+    settling_time = max(MIN_MEASURE_SEC, min(MAX_MEASURE_SEC, settling_time))
+    
+    # Update wait and measure times using exponential moving average
+    LEARNING_WAIT_SEC = (LEARNING_WAIT_SEC * (1 - TIMING_ADAPT_RATE) + 
+                        response_time * TIMING_ADAPT_RATE)
+    LEARNING_MEASURE_SEC = (LEARNING_MEASURE_SEC * (1 - TIMING_ADAPT_RATE) + 
+                          settling_time * TIMING_ADAPT_RATE)
+    
+    # Adjust PI gains based on response characteristics
+    # Slower response = lower gains to prevent oscillation
+    new_p_gain = PROPORTIONAL_GAIN * (5.0 / response_time)
+    new_i_gain = INTEGRAL_GAIN * (5.0 / settling_time)
+    
+    # Bound the gains to safe ranges
+    PROPORTIONAL_GAIN = max(0.2, min(0.8, new_p_gain))
+    INTEGRAL_GAIN = max(0.05, min(0.15, new_i_gain))
+    
+    print(f"Updated timing - Wait: {LEARNING_WAIT_SEC:.1f}s, Measure: {LEARNING_MEASURE_SEC:.1f}s")
+    print(f"Updated gains - P: {PROPORTIONAL_GAIN:.2f}, I: {INTEGRAL_GAIN:.2f}")
+
+def calculate_turn_rate():
+    """Calculate current turn rate based on recent heading changes.
+    Positive values mean turning starboard, negative mean turning port."""
+    global heading_history
+    
+    now = time.ticks_ms()
+    heading_history.append((now, current_heading))
+    if len(heading_history) > MAX_HISTORY:
+        heading_history.pop(0)
+    
+    if len(heading_history) < 2:
+        return 0.0
+    
+    time_diff = time.ticks_diff(heading_history[-1][0], heading_history[0][0]) / 1000
+    heading_diff = get_heading_difference(heading_history[0][1], heading_history[-1][1])
+    return heading_diff / time_diff if time_diff > 0 else 0.0
 
 # --- Main Program (Runs on Core 1) ---
 _thread.start_new_thread(sensor_loop, ())
@@ -252,30 +388,46 @@ while True:
     if time.ticks_diff(now, last_button_check) > 500: # Check every 500ms
         if not navigate_button.value():
             last_button_check = now # Debounce
-            if state == "NAVIGATING":
-                state = "IDLE"
-                learning_state = "IDLE" # Reset learning
+            if state == State.NAVIGATING:
+                state = State.IDLE
+                learning_state = LearningState.IDLE # Reset learning
                 led_pin.value(0) # Turn LED OFF
                 print("Navigation stopped.")
-            elif state == "IDLE":
+            elif state == State.IDLE:
                 TARGET_HEADING = current_heading # Grab the current heading
                 integral_error = 0.0 # Reset memory when setting a new course
-                state = "NAVIGATING"
+                state = State.NAVIGATING
                 last_action_time = now # Start control loop timer
                 led_pin.value(1) # Turn LED ON
                 print(f"Navigation started. Holding new course: {TARGET_HEADING:.1f}")
 
     # --- Learning State Machine ---
-    if learning_state == "WAITING":
+    if learning_state == LearningState.WAITING:
         if time.ticks_diff(now, last_action_time) >= (LEARNING_WAIT_SEC * 1000):
-            heading_before_measure = current_heading
-            learning_state = "MEASURING"
-            last_action_time = now
+            # Check if we have enough movement to start measuring
+            current_change = abs(get_heading_difference(current_heading, heading_before_measure))
+            if current_change >= MIN_HEADING_CHANGE:
+                turn_start_time = now  # Record when the turn started
+                heading_before_measure = current_heading
+                learning_state = LearningState.MEASURING
+                last_action_time = now
+            elif time.ticks_diff(now, last_action_time) >= (MAX_WAIT_SEC * 1000):
+                # If no movement after max wait time, abort learning cycle
+                learning_state = LearningState.IDLE
+                print("No significant movement detected, skipping measurement")
     
-    elif learning_state == "MEASURING":
+    elif learning_state == LearningState.MEASURING:
         if time.ticks_diff(now, last_action_time) >= (LEARNING_MEASURE_SEC * 1000):
+            # Calculate actual response characteristics
+            response_time = time.ticks_diff(turn_start_time, last_action_time) / 1000
+            settling_time = time.ticks_diff(now, turn_start_time) / 1000
+            
+            # Update timing parameters based on observed behavior
+            update_timing_parameters(response_time, settling_time)
+            
+            # Complete the learning cycle
             update_after_learning(last_pulse_direction, last_pulse_ms)
-            learning_state = "IDLE"
+            learning_state = LearningState.IDLE
             # Allow the navigation logic to run again immediately
             last_action_time = time.ticks_ms() - CONTROL_LOOP_DELAY_MS 
 
