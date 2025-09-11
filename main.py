@@ -28,14 +28,6 @@ class LearningState:
     WAITING = "WAITING"
     MEASURING = "MEASURING"
 
-class LearningContext:
-    def __init__(self):
-        self.pulse_direction = ""
-        self.pulse_ms = 0
-        self.heading_before_measure = 0.0
-        self.state = LearningState.IDLE
-        self.last_action_time = 0
-
 class EnginePosition:
     def __init__(self):
         self.estimated_position = 0.0  # -100 to +100 (port to starboard)
@@ -162,11 +154,11 @@ class Pins:
     LED = 19
 
 class Navigation:
-    CONTROL_LOOP_DELAY_MS = 1000
+    CONTROL_LOOP_DELAY_MS = 2000
     SAVE_INTERVAL = 20
     PROPORTIONAL_GAIN = 0.6
-    INTEGRAL_GAIN = 0.1
-    INTEGRAL_MAX = 5.0
+    INTEGRAL_GAIN = 0.05
+    INTEGRAL_MAX = 3.0
 
 # --- Configuration ---
 
@@ -197,7 +189,6 @@ ACTION_HISTORY_LIMIT = 15   # Maximum steering actions in 60 seconds (safety)
 
 # NAVIGATION PARAMETERS
 TARGET_HEADING = 180.0
-CONTROL_LOOP_DELAY_MS = 2000
 SAVE_INTERVAL = 20         # Save calibration to memory after every 20 adjustments
 
 # --- PI-CONTROL PARAMETERS ---
@@ -222,7 +213,6 @@ integral_error = 0.0 # The "memory" for the PI controller
 # Create new system components
 engine_position = EnginePosition()
 drift_compensation = DriftCompensation()
-learning_context = LearningContext()
 
 # Action history for safety monitoring
 action_history = []  # Store timestamps of steering actions
@@ -273,8 +263,10 @@ def sensor_loop():
             time.sleep(1)
             try:
                 bno.init_sensor()  # Try to reinitialize on error
-            except:
-                pass
+                print("Sensor reinitialized after error")
+            except Exception as init_error:
+                print(f"Failed to reinitialize sensor: {init_error}")
+                time.sleep(2)  # Longer delay before retry
 
 # --- Core 1: Main Logic ---
 
@@ -314,22 +306,141 @@ def run_pump(direction, duration_ms):
         pump_pwm.duty(0)  # Ensure pump stops even if there's an error
 
 def save_calibration():
+    """Save boat-specific learned parameters to persistent storage"""
     try:
-        nvs.set_blob('cal_data', ujson.dumps(calibration_data))
+        # Only save boat characteristics that persist across sessions
+        learning_data = {
+            'calibration_data': calibration_data,
+            'boat_characteristics': {
+                'base_learning_wait_sec': LEARNING_WAIT_SEC,
+                'base_learning_measure_sec': LEARNING_MEASURE_SEC
+            },
+            'version': 1.0  # For future compatibility
+        }
+        
+        nvs.set_blob('boat_data', ujson.dumps(learning_data))
         nvs.commit()
-        print("Calibration data saved.")
+        print("Boat characteristics saved.")
     except Exception as e:
-        print(f"Error saving calibration: {e}")
+        print(f"Error saving boat data: {e}")
 
 def load_calibration():
-    global calibration_data
+    """Load boat-specific learned parameters from persistent storage"""
+    global calibration_data, LEARNING_WAIT_SEC, LEARNING_MEASURE_SEC
+    
     try:
-        json_data = nvs.get_blob('cal_data')
-        calibration_data = ujson.loads(json_data)
-        print("Calibration data loaded from memory.")
+        # Try to load boat characteristics
+        json_data = nvs.get_blob('boat_data')
+        boat_data = ujson.loads(json_data)
+        
+        # Load calibration data (how the boat responds to steering)
+        if ('calibration_data' in boat_data and 
+            isinstance(boat_data['calibration_data'], dict) and 
+            'starboard' in boat_data['calibration_data'] and 
+            'port' in boat_data['calibration_data']):
+            calibration_data = boat_data['calibration_data']
+            print("Boat calibration data loaded from memory.")
+        else:
+            calibration_data = DEFAULT_CALIBRATION_DATA
+            print("Invalid calibration data, using defaults.")
+            
+        # Load boat-specific timing characteristics
+        if 'boat_characteristics' in boat_data:
+            char_data = boat_data['boat_characteristics']
+            if 'base_learning_wait_sec' in char_data:
+                LEARNING_WAIT_SEC = char_data['base_learning_wait_sec']
+            if 'base_learning_measure_sec' in char_data:
+                LEARNING_MEASURE_SEC = char_data['base_learning_measure_sec']
+            print(f"Boat timing characteristics loaded: wait={LEARNING_WAIT_SEC:.1f}s, measure={LEARNING_MEASURE_SEC:.1f}s")
+            
+    except (OSError, ValueError, TypeError, KeyError):
+        # Fallback: try to load legacy format
+        try:
+            json_data = nvs.get_blob('cal_data')
+            loaded_data = ujson.loads(json_data)
+            
+            if isinstance(loaded_data, dict) and 'starboard' in loaded_data and 'port' in loaded_data:
+                calibration_data = loaded_data
+                print("Legacy calibration data loaded.")
+            else:
+                calibration_data = DEFAULT_CALIBRATION_DATA
+                print("Invalid legacy calibration data, using defaults.")
+        except:
+            calibration_data = DEFAULT_CALIBRATION_DATA
+            print("No previous boat data found, using defaults.")
+
+def needs_initial_learning():
+    """Check if the system needs initial learning (no previous calibration)"""
+    try:
+        # Check for boat characteristics
+        nvs.get_blob('boat_data')
+        return False  # Boat data exists
     except (OSError, ValueError):
+        try:
+            # Check for legacy format
+            nvs.get_blob('cal_data')
+            return False  # Legacy calibration data exists
+        except (OSError, ValueError):
+            return True  # No calibration data found
+
+def perform_initial_learning():
+    """Perform initial learning sequence to establish basic calibration"""
+    global calibration_data, state
+    print("No previous calibration found. Starting initial learning sequence...")
+    state = State.INITIALIZING
+    
+    try:
+        # Initialize with minimal default values
+        calibration_data = {
+            "starboard": {"200": 0.5, "400": 1.0, "600": 1.5},
+            "port": {"200": 0.5, "400": 1.0, "600": 1.5}
+        }
+        
+        initial_heading = current_heading
+        
+        # Test starboard response
+        print("Learning starboard response...")
+        for pulse_ms in [200, 400, 600]:
+            run_pump("starboard", pulse_ms)
+            time.sleep(3)  # Wait for response
+            
+            heading_change = abs(get_heading_difference(initial_heading, current_heading))
+            turn_rate = heading_change / 3.0  # 3 second observation
+            
+            if turn_rate > 0.1:  # Minimum detectable turn
+                calibration_data["starboard"][str(pulse_ms)] = turn_rate
+                print(f"Starboard {pulse_ms}ms: {turn_rate:.2f}°/s")
+            
+            time.sleep(2)  # Settle time
+            
+        # Return to initial heading roughly
+        time.sleep(5)
+        
+        # Test port response  
+        print("Learning port response...")
+        for pulse_ms in [200, 400, 600]:
+            run_pump("port", pulse_ms)
+            time.sleep(3)  # Wait for response
+            
+            heading_change = abs(get_heading_difference(initial_heading, current_heading))
+            turn_rate = heading_change / 3.0  # 3 second observation
+            
+            if turn_rate > 0.1:  # Minimum detectable turn
+                calibration_data["port"][str(pulse_ms)] = turn_rate
+                print(f"Port {pulse_ms}ms: {turn_rate:.2f}°/s")
+            
+            time.sleep(2)  # Settle time
+            
+        # Save initial calibration
+        save_calibration()
+        print("Initial learning complete. Basic calibration established.")
+        
+    except Exception as e:
+        print(f"Error during initial learning: {e}")
         calibration_data = DEFAULT_CALIBRATION_DATA
-        print("Using default calibration data.")
+    
+    finally:
+        state = State.IDLE
 
 def get_heading_difference(h1, h2):
     diff = h2 - h1
@@ -355,16 +466,16 @@ def run_navigation_cycle():
     It's called only when the state is "NAVIGATING" and we are not in a learning delay.
     """
     global save_counter, integral_error, learning_state, last_action_time, \
-           last_pulse_direction, last_pulse_ms, last_turn_direction
+           last_pulse_direction, last_pulse_ms
     
     now = time.ticks_ms()
 
     # --- Navigation Logic (only if not in a learning-related delay) ---
-    if learning_state != "IDLE":
+    if learning_state != LearningState.IDLE:
         return
 
     # Check if it's time for the next control loop iteration
-    if time.ticks_diff(now, last_action_time) < CONTROL_LOOP_DELAY_MS:
+    if time.ticks_diff(now, last_action_time) < Navigation.CONTROL_LOOP_DELAY_MS:
         return
     
     # Calculate current turn rate
@@ -397,8 +508,8 @@ def run_navigation_cycle():
         integral_error *= 0.5  # Reduce integral when engine is deflected
     
     # Clamp the integral to prevent "integral windup"
-    if integral_error > INTEGRAL_MAX: integral_error = INTEGRAL_MAX
-    if integral_error < -INTEGRAL_MAX: integral_error = -INTEGRAL_MAX
+    if integral_error > Navigation.INTEGRAL_MAX: integral_error = Navigation.INTEGRAL_MAX
+    if integral_error < -Navigation.INTEGRAL_MAX: integral_error = -Navigation.INTEGRAL_MAX
     
     print(f"Heading: {heading_now:.1f}, Target: {TARGET_HEADING:.1f} (adj: {adjusted_target:.1f}), Error: {heading_error:.1f}, Memory: {integral_error:.1f}")
 
@@ -416,7 +527,7 @@ def run_navigation_cycle():
         direction = "port" if current_turn_rate > 0 else "starboard"
         required_turn_rate = abs(current_turn_rate) * 0.5  # 50% counter-rudder
     else:
-        direction = "starboard" if (heading_error * PROPORTIONAL_GAIN + integral_error * INTEGRAL_GAIN) > 0 else "port"
+        direction = "starboard" if (heading_error * Navigation.PROPORTIONAL_GAIN + integral_error * Navigation.INTEGRAL_GAIN) > 0 else "port"
     
     # Check if engine needs return pulse due to position
     if engine_position.needs_return_pulse(direction):
@@ -438,7 +549,12 @@ def run_navigation_cycle():
     best_pulse = find_best_pulse(direction, required_turn_rate)
 
     if best_pulse > 0:
-        overshoot_factor = required_turn_rate / calibration_data[direction][str(best_pulse)]
+        # Protect against division by zero
+        calibrated_rate = calibration_data[direction][str(best_pulse)]
+        if calibrated_rate > 0:
+            overshoot_factor = required_turn_rate / calibrated_rate
+        else:
+            overshoot_factor = 1.0  # Fallback to normal pulse if calibration is zero
         pulse_to_run = int(best_pulse * overshoot_factor)
         
         # Store context for the learning part
@@ -447,13 +563,16 @@ def run_navigation_cycle():
 
         run_pump(direction, pulse_to_run)
         
+        # Initialize heading measurement for learning
+        heading_before_measure = current_heading
+        
         # Start the learning sequence with adaptive timing
         adaptive_learning_timing()
-        learning_state = "WAITING"
+        learning_state = LearningState.WAITING
         last_action_time = time.ticks_ms() # Reset timer for next phase
         
         save_counter += 1
-        if save_counter >= SAVE_INTERVAL:
+        if save_counter >= Navigation.SAVE_INTERVAL:
             save_calibration()
             save_counter = 0
 
@@ -492,7 +611,7 @@ def safety_check():
     if not bno.calibrated():
         print("Warning: Sensor not calibrated")
         return False
-    if abs(integral_error) >= INTEGRAL_MAX * 0.9:
+    if abs(integral_error) >= Navigation.INTEGRAL_MAX * 0.9:
         print("Warning: Large integral error")
         return False
     return True
@@ -639,6 +758,14 @@ def update_timing_parameters(response_time, settling_time):
     
     print(f"Updated timing - Wait: {LEARNING_WAIT_SEC:.1f}s, Measure: {LEARNING_MEASURE_SEC:.1f}s")
     print(f"Updated gains - P: {PROPORTIONAL_GAIN:.2f}, I: {INTEGRAL_GAIN:.2f}")
+    
+    # Save boat characteristics occasionally (every 10 updates to capture long-term learning)
+    if not hasattr(update_timing_parameters, 'save_counter'):
+        update_timing_parameters.save_counter = 0
+    update_timing_parameters.save_counter += 1
+    if update_timing_parameters.save_counter >= 10:
+        save_calibration()
+        update_timing_parameters.save_counter = 0
 
 def calculate_turn_rate():
     """Calculate current turn rate based on recent heading changes.
@@ -650,22 +777,55 @@ def calculate_turn_rate():
     if len(heading_history) > MAX_HISTORY:
         heading_history.pop(0)
     
-    if len(heading_history) < 2:
+    if len(heading_history) < 3:  # Need at least 3 points for stable calculation
         return 0.0
     
-    time_diff = time.ticks_diff(heading_history[-1][0], heading_history[0][0]) / 1000
-    heading_diff = get_heading_difference(heading_history[0][1], heading_history[-1][1])
-    return heading_diff / time_diff if time_diff > 0 else 0.0
+    # Use linear regression over multiple points for more stable turn rate
+    time_diffs = []
+    heading_diffs = []
+    
+    for i in range(1, len(heading_history)):
+        time_diff = time.ticks_diff(heading_history[i][0], heading_history[i-1][0]) / 1000
+        heading_diff = get_heading_difference(heading_history[i-1][1], heading_history[i][1])
+        
+        if time_diff > 0:
+            time_diffs.append(time_diff)
+            heading_diffs.append(heading_diff)
+    
+    if not time_diffs:
+        return 0.0
+        
+    # Simple average of turn rates
+    turn_rates = [h_diff / t_diff for h_diff, t_diff in zip(heading_diffs, time_diffs)]
+    return sum(turn_rates) / len(turn_rates)
 
 # --- Main Program (Runs on Core 1) ---
 _thread.start_new_thread(sensor_loop, ())
-print("Autopilot starting. Loading calibration...")
+print("Autopilot starting. Loading boat characteristics...")
 load_calibration()
+
+# Update current timing variables with loaded boat characteristics
+current_wait_time = LEARNING_WAIT_SEC
+current_measure_time = LEARNING_MEASURE_SEC
+
+# Reset session-specific parameters (these change every fishing trip)
+engine_position.estimated_position = 0.0       # Engine position unknown at startup
+engine_position.position_confidence = 0.0      # No confidence in position
+drift_compensation.baseline_adjustment = 0.0   # No drift compensation yet
+drift_compensation.drift_history = []          # Clear drift history
+integral_error = 0.0                           # Reset PI controller memory
+
+print("Session-specific parameters reset for new fishing trip.")
+
+# Check if initial learning is needed (for systems with no previous calibration)
+if needs_initial_learning():
+    print("No boat data found. Initial learning will be performed on first navigation start.")
 
 # For non-blocking logic
 last_button_check = 0
 last_pulse_direction = ""
 last_pulse_ms = 0
+needs_initial_cal = needs_initial_learning()
 
 while True:
     now = time.ticks_ms()
@@ -680,6 +840,12 @@ while True:
                 led_pin.value(0) # Turn LED OFF
                 print("Navigation stopped.")
             elif state == State.IDLE:
+                # Check if initial learning is needed (for completely unknown systems)
+                if needs_initial_cal:
+                    print("Performing initial learning...")
+                    perform_initial_learning()
+                    needs_initial_cal = False
+                
                 # Check if engine initialization is needed
                 if INITIALIZATION_REQUIRED and engine_position.position_confidence < 0.5:
                     print("Engine position unknown, initializing...")
@@ -714,7 +880,7 @@ while True:
     elif learning_state == LearningState.MEASURING:
         if time.ticks_diff(now, last_action_time) >= (current_measure_time * 1000):
             # Calculate actual response characteristics
-            response_time = time.ticks_diff(turn_start_time, last_action_time) / 1000
+            response_time = time.ticks_diff(last_action_time, turn_start_time) / 1000
             settling_time = time.ticks_diff(now, turn_start_time) / 1000
             
             # Update timing parameters based on observed behavior
@@ -724,7 +890,7 @@ while True:
             update_after_learning(last_pulse_direction, last_pulse_ms)
             learning_state = LearningState.IDLE
             # Allow the navigation logic to run again immediately
-            last_action_time = time.ticks_ms() - CONTROL_LOOP_DELAY_MS 
+            last_action_time = time.ticks_ms() - Navigation.CONTROL_LOOP_DELAY_MS 
 
 
     if state == State.NAVIGATING:
